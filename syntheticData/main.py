@@ -1,4 +1,5 @@
 from synthetic_generator import generate_user_ids, generate_cohort, generate_HR
+import pandas as pd
 from plotting import (
     plot_gap_histogram,
     plot_missing_rate_histogram,
@@ -38,6 +39,12 @@ if __name__ == "__main__":
     plot_gap_histogram(ema_df, mean_gap_length=3)
     plot_missing_rate_histogram(ema_df, resp_rate=RESP_RATE)
     plot_response_raster(ema_df, resp_rate=RESP_RATE)
-    plot_heart_rate(hr_df[hr_df["user_id"] == user_ids[0]])  # single user for readability | add more if needed
+
+    target_date = pd.to_datetime('2026-06-02').date()
+    sample_hr = hr_df[
+        (hr_df["user_id"] == user_ids[0]) & 
+        (hr_df['timestamp'].dt.date == target_date)
+    ]
+    plot_heart_rate(sample_hr)  # single user for readability | add more if needed
 
     print('DONE RUNNING')
