@@ -65,7 +65,7 @@ e_t ~ $Normal(0, \sigma_{e^2})$ : random noise is Normally distributed.
 
 ### DataFrame structure
 - EXPECTED EMA vs. CALCULATED EMA
-      - pd.DataFrame({
+      - ` pd.DataFrame({
             "user_id": user_id,
             "timestamp": timestamps,
             "prompt_idx": np.arange(n),
@@ -73,15 +73,15 @@ e_t ~ $Normal(0, \sigma_{e^2})$ : random noise is Normally distributed.
             "ema": ema,
             "true_sigma": sigma,
             "true_rho": rho,
-            "true_expected_mssd": expected_mssd,
+            "true_expected_mssd": expected_mssd,`
         })
 - Heart Rate for each user with [0, n] bouts/spikes
-     - pd.DataFrame({
+     - ` pd.DataFrame({
             "user_id": user_id,
             "timestamp": timestamps,
             "minute":  t,
             "day":     t // min_per_day,
-            "hr":      hr,
+            "hr":      hr,`
         })
 ### `plotting.py`
 
