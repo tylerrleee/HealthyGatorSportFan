@@ -87,6 +87,23 @@ e_t ~ $Normal(0, \sigma_{e^2})$ : random noise is Normally distributed.
             "hr":      hr,
         })
 ```
+
+## EXAMPLE MSSD VALIDATION
+```
+computed_mssd = df.groupby("user_id")["ema"].apply(mssd).rename("computed_mssd")
+expected_mssd = df.groupby("user_id")["true_expected_mssd"].first()
+
+check = pd.concat([computed_mssd, expected_mssd], axis=1)
+print(check.corr(method = "spearman")) 
+
+# OUTPUT
+                    computed_mssd  true_expected_mssd
+computed_mssd            1.000000            0.927797
+true_expected_mssd       0.927797            1.000000
+```
+- Either mssd() has a bug, or the missing data of EMAs contributed to this discrepancy where certain values are dropped in the time-series.
+
+
 ### `plotting.py`
 
 Diagnostic visualizations for validating the synthetic data. All figures are saved to `figures/`.
