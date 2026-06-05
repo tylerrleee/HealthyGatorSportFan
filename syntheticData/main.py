@@ -8,6 +8,8 @@ from plotting import (
 )
 
 if __name__ == "__main__":
+
+    # TWEAK PARAMETERS HERE
     USERS = 100
     DAYS = 7
     EMA_PER_DAY = 5
