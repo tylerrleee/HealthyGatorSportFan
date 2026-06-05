@@ -63,6 +63,18 @@ $e_t$ : Random noise that influence user's state (e.g. FSU just scored, just too
 e_t ~ $Normal(0, \sigma_{e^2})$ : random noise is Normally distributed.
   - On average, most noise are close to the mean, 0, but sometimes, depending $\sigma_{e^2}$, it can be influential
 
+- EXPECTED EMA vs. CALCULATED EMA
+      - pd.DataFrame({
+            "user_id": user_id,
+            "timestamp": timestamps,
+            "prompt_idx": np.arange(n),
+            "day": np.arange(n) // ema_per_day,
+            "ema": ema,
+            "true_sigma": sigma,
+            "true_rho": rho,
+            "true_expected_mssd": expected_mssd,
+        })
+- 
 ### `plotting.py`
 
 Diagnostic visualizations for validating the synthetic data. All figures are saved to `figures/`.
