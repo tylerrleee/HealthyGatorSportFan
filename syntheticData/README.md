@@ -63,6 +63,7 @@ $e_t$ : Random noise that influence user's state (e.g. FSU just scored, just too
 e_t ~ $Normal(0, \sigma_{e^2})$ : random noise is Normally distributed.
   - On average, most noise are close to the mean, 0, but sometimes, depending $\sigma_{e^2}$, it can be influential
 
+### DataFrame structure
 - EXPECTED EMA vs. CALCULATED EMA
       - pd.DataFrame({
             "user_id": user_id,
@@ -74,7 +75,14 @@ e_t ~ $Normal(0, \sigma_{e^2})$ : random noise is Normally distributed.
             "true_rho": rho,
             "true_expected_mssd": expected_mssd,
         })
-- 
+- Heart Rate for each user with [0, n] bouts/spikes
+     - pd.DataFrame({
+            "user_id": user_id,
+            "timestamp": timestamps,
+            "minute":  t,
+            "day":     t // min_per_day,
+            "hr":      hr,
+        })
 ### `plotting.py`
 
 Diagnostic visualizations for validating the synthetic data. All figures are saved to `figures/`.
