@@ -12,6 +12,7 @@ from plotting import (
     plot_response_raster,
     plot_heart_rate,
     plot_stress,
+    plot_continuous_hrv,
     plot_hrv_status,
 )
 
@@ -65,8 +66,9 @@ if __name__ == "__main__":
         (hr_df["user_id"] == user_ids[0]) &
         (hr_df['timestamp'].dt.date == target_date)
     ]
-    plot_heart_rate(sample_hr)  # single user for readability | add more if needed
-    plot_stress(sample_hr)      # continuous all-day stress (from HR)
+    plot_heart_rate(sample_hr)     # single user for readability | add more if needed
+    plot_stress(sample_hr)         # continuous all-day stress (from HR)
+    plot_continuous_hrv(sample_hr) # continuous all-day HRV (RMSSD, from beat-by-beat RR)
 
     sample_hrv = hrv_df[hrv_df["user_id"] == user_ids[0]]
     plot_hrv_status(sample_hrv)  # overnight HRV Status across all nights

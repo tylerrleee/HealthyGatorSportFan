@@ -34,6 +34,7 @@ import matplotlib.pyplot as plt
 from scipy import stats
 
 from synthetic_generator import generate_cohort
+from plotting import plot_config_recovery
 
 FIGURE_DIR = os.path.join(os.path.dirname(__file__), "figures", "validation")
 
@@ -53,6 +54,50 @@ def empirical_mssd(series):
     if diffs.size == 0:
         return np.nan
     return float(np.mean(diffs ** 2))
+
+
+def recover_ar1_params(series):
+    """
+    Recover the AR(1) latent knobs (rho, sigma) from one user's *observed* EMA.
+
+    `series` is the realised 1-5 Likert array (with NaN gaps), i.e. the latent
+    AR(1) process after mean-shift, Likert rounding/clipping and missingness.
+    We demean by the empirical mean of the answered points (not the generator's
+    mu, which a real analyst would not know):
+
+      sigma_hat : sample SD of the demeaned answered series. The AR(1)
+                  stationary SD equals sigma, so this estimates it directly.
+      rho_hat   : lag-1 autocorrelation over *consecutive answered pairs* only
+                  (a NaN in either position drops that pair, mirroring the
+                  successive-difference logic in `empirical_mssd`).
+
+    Returns (rho_hat, sigma_hat); either is NaN when there is too little data.
+    Rounding/clipping bias is expected and is exactly what the recovery table
+    surfaces: rounding inflates sigma_hat at small sigma and attenuates rho_hat,
+    clipping deflates sigma_hat at large sigma.
+    """
+    z = np.asarray(series, dtype=float)
+    answered = z[~np.isnan(z)]
+
+    if answered.size < 2:
+        return np.nan, np.nan
+
+    m = answered.mean()
+    sigma_hat = float(answered.std(ddof=1))
+
+    # consecutive answered pairs (both prompts non-NaN)
+    a = z[:-1]
+    b = z[1:]
+    pair = ~np.isnan(a) & ~np.isnan(b)
+    a = a[pair] - m
+    b = b[pair] - m
+
+    denom = np.sum(a ** 2)
+    if a.size < 2 or denom <= 0:
+        return np.nan, sigma_hat
+
+    rho_hat = float(np.sum(a * b) / denom)
+    return rho_hat, sigma_hat
 
 
 def _label_for(sigma, rho):
@@ -99,12 +144,15 @@ def build_validation_cohort(days    = 14,
             )
             for uid, g in cohort.groupby("user_id"):
                 g = g.sort_values("prompt_idx")
+                rho_hat, sigma_hat = recover_ar1_params(g["ema"].to_numpy())
                 records.append({
                     "user_id": uid,
                     "true_sigma": sigma,
                     "true_rho": rho,
                     "true_expected_mssd": float(g["true_expected_mssd"].iloc[0]),
                     "empirical_mssd": empirical_mssd(g["ema"].to_numpy()),
+                    "rho_hat": rho_hat,
+                    "sigma_hat": sigma_hat,
                     "n_answered": int(g["ema"].notna().sum()),
                     "group": _label_for(sigma, rho),
                 })
@@ -112,6 +160,31 @@ def build_validation_cohort(days    = 14,
     df = pd.DataFrame.from_records(records)
     # users who answered almost nothing give an undefined / unstable MSSD
     return df.dropna(subset=["empirical_mssd"])
+
+
+def build_config_table(df):
+    """
+    One comparison table of true vs. recovered AR(1) parameters per grid cell.
+
+    Collapses the per-user validation frame onto the (true_sigma, true_rho) grid
+    (one row per pinned cell), averaging the recovered sigma_hat / rho_hat across
+    that cell's users. The recovery_pct columns express recovered / true as a
+    percentage (100% = perfect recovery; >100% = over-recovered).
+
+    Returns a tidy DataFrame named, by convention, `data_generation_config`.
+    """
+    grouped = (df.groupby(["true_sigma", "true_rho"])
+                 .agg(recovered_sigma=("sigma_hat", "mean"),
+                      recovered_rho=("rho_hat", "mean"),
+                      n_users=("user_id", "count"))
+                 .reset_index())
+
+    grouped["sigma_recovery_pct"] = 100.0 * grouped["recovered_sigma"] / grouped["true_sigma"]
+    grouped["rho_recovery_pct"] = 100.0 * grouped["recovered_rho"] / grouped["true_rho"]
+
+    cols = ["true_sigma", "true_rho", "recovered_sigma", "recovered_rho",
+            "sigma_recovery_pct", "rho_recovery_pct", "n_users"]
+    return grouped[cols].round(3)
 
 
 def plot_recovery(df, ax=None):
@@ -184,10 +257,20 @@ def main():
     slope, r, spearman = plot_recovery(df)
     plot_group_separation(df)
 
+    # True vs. recovered (sigma, rho) per grid cell -- one comparison table.
+    data_generation_config = build_config_table(df)
+    config_path = os.path.join(FIGURE_DIR, "data_generation_config.csv")
+    data_generation_config.to_csv(config_path, index=False)
+    plot_config_recovery(data_generation_config)  # true vs. recovered scatter
+
+    print("data_generation_config  : true vs. recovered AR(1) params per cell")
+    print(data_generation_config.to_string(index=False))
+    print()
     print(f"users validated         : {len(df)}")
     print(f"OLS slope               : {slope:.3f}")
     print(f"Pearson r               : {r:.3f}")
     print(f"Spearman rho            : {spearman:.3f}")
+    print(f"config table written to : {config_path}")
     print(f"figures written to      : {FIGURE_DIR}")
 
     if r >= 0.7:

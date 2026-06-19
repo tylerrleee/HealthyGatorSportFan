@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import matplotlib.dates as mdates
 
 FIGURE_DIR = os.path.join(os.path.dirname(__file__), "figures")
+VALIDATION_DIR = os.path.join(FIGURE_DIR, "validation")
 
 
 # HELPERS
@@ -123,6 +124,58 @@ def plot_response_raster(df, resp_rate, seed=1, n_show=40, figsize=(12, 5)):
 
 
 
+def plot_config_recovery(df=None, csv_path=None, figsize=(13, 6)):
+    """
+    True vs. recovered AR(1) parameters from the data_generation_config table.
+
+    Two panels -- sigma and rho -- each scattering the recovered value against
+    the true value with a y = x identity line (points on the line = perfect
+    recovery). Each point is one (sigma, rho) grid cell, coloured by the *other*
+    parameter so attenuation patterns are visible (e.g. rho recovers poorly when
+    sigma is small, because Likert rounding erases the fine autocorrelation).
+
+    Reads figures/validation/data_generation_config.csv by default, or accepts
+    the DataFrame directly (as built by mssd_validation.build_config_table).
+    """
+    if df is None:
+        if csv_path is None:
+            csv_path = os.path.join(VALIDATION_DIR, "data_generation_config.csv")
+        df = pd.read_csv(csv_path)
+
+    fig, (ax_s, ax_r) = plt.subplots(1, 2, figsize=figsize)
+
+    # sigma panel: recovered vs true, coloured by true_rho
+    sc = ax_s.scatter(df["true_sigma"], df["recovered_sigma"], c=df["true_rho"],
+                      cmap="viridis", s=70, edgecolor="white", zorder=3)
+    s_lo = min(df["true_sigma"].min(), df["recovered_sigma"].min())
+    s_hi = max(df["true_sigma"].max(), df["recovered_sigma"].max())
+    ax_s.plot([s_lo, s_hi], [s_lo, s_hi], "k--", alpha=0.6, label="y = x (perfect)")
+    ax_s.set_xlabel(r"true $\sigma$")
+    ax_s.set_ylabel(r"recovered $\hat{\sigma}$")
+    ax_s.set_title(r"$\sigma$ recovery")
+    ax_s.grid(True, linestyle="--", alpha=0.4)
+    ax_s.legend(loc="best", fontsize=8)
+    fig.colorbar(sc, ax=ax_s, label=r"true $\rho$")
+
+    # rho panel: recovered vs true, coloured by true_sigma
+    sc2 = ax_r.scatter(df["true_rho"], df["recovered_rho"], c=df["true_sigma"],
+                       cmap="plasma", s=70, edgecolor="white", zorder=3)
+    r_lo = min(df["true_rho"].min(), df["recovered_rho"].min())
+    r_hi = max(df["true_rho"].max(), df["recovered_rho"].max())
+    ax_r.plot([r_lo, r_hi], [r_lo, r_hi], "k--", alpha=0.6, label="y = x (perfect)")
+    ax_r.set_xlabel(r"true $\rho$")
+    ax_r.set_ylabel(r"recovered $\hat{\rho}$")
+    ax_r.set_title(r"$\rho$ recovery")
+    ax_r.grid(True, linestyle="--", alpha=0.4)
+    ax_r.legend(loc="best", fontsize=8)
+    fig.colorbar(sc2, ax=ax_r, label=r"true $\sigma$")
+
+    fig.suptitle("Recovered vs. true AR(1) parameters (data_generation_config)")
+    fig.tight_layout()
+    os.makedirs(VALIDATION_DIR, exist_ok=True)
+    fig.savefig(os.path.join(VALIDATION_DIR, "param_recovery.png"), bbox_inches="tight")
+
+
 def plot_heart_rate(df, figsize=(15, 6)):
     """
     Plots heart rate over time for a given DataFrame.
@@ -173,6 +226,52 @@ def plot_stress(df, figsize=(15, 6)):
     fig.autofmt_xdate()
     fig.tight_layout()
     fig.savefig(os.path.join(FIGURE_DIR, "stress_analysis.png"), bbox_inches="tight")
+
+
+def plot_continuous_hrv(df, figsize=(15, 6), hrv_window=30):
+    """
+    Continuous all-day HRV (RMSSD, ms) for a single user, derived beat-by-beat,
+    with HR overlaid on a second axis to show HRV falling as HR rises. Expects
+    the HR DataFrame (columns: timestamp, hr, rmssd_ms).
+
+    The raw per-minute RMSSD is noisy, so we also draw a smoothed HRV trend (a
+    `hrv_window`-minute rolling mean) -- the value a Garmin device surfaces as
+    "HRV" -- as a bold line on top of the faint raw trace.
+    """
+    df = df.sort_values('timestamp')
+    hrv_trend = df['rmssd_ms'].rolling(window=hrv_window, min_periods=1).mean()
+
+    fig, ax_hrv = plt.subplots(figsize=figsize)
+
+    # raw per-minute RMSSD, kept faint
+    ax_hrv.plot(df['timestamp'], df['rmssd_ms'], color='tab:green',
+                alpha=0.25, linewidth=0.8, label='RMSSD (per-minute)')
+    # smoothed HRV trend (what Garmin reports as HRV)
+    ax_hrv.plot(df['timestamp'], hrv_trend, color='tab:green',
+                alpha=0.95, linewidth=2.2,
+                label=f'HRV ({hrv_window}-min rolling mean)')
+    ax_hrv.set_ylabel("HRV / RMSSD (ms)", color='tab:green')
+    ax_hrv.tick_params(axis='y', labelcolor='tab:green')
+    ax_hrv.set_xlabel("Time")
+
+    ax_hr = ax_hrv.twinx()
+    ax_hr.plot(df['timestamp'], df['hr'], color='tab:red', alpha=0.4,
+               linewidth=1, label='Heart Rate (bpm)')
+    ax_hr.set_ylabel("BPM", color='tab:red')
+    ax_hr.tick_params(axis='y', labelcolor='tab:red')
+
+    src = df['source'].iloc[0] if 'source' in df.columns and len(df) else 'Garmin'
+    ax_hrv.set_title(f"Continuous all-day HRV (RMSSD), from beat-by-beat RR ({src})")
+    ax_hrv.grid(True, linestyle='--', alpha=0.5)
+    ax_hrv.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+
+    # combined legend across both axes (raw RMSSD, HRV trend, HR)
+    lines = ax_hrv.get_lines() + ax_hr.get_lines()
+    ax_hrv.legend(lines, [ln.get_label() for ln in lines], loc='upper right', fontsize=8)
+
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    fig.savefig(os.path.join(FIGURE_DIR, "continuous_hrv_analysis.png"), bbox_inches="tight")
 
 
 def plot_hrv_status(df, figsize=(13, 6)):

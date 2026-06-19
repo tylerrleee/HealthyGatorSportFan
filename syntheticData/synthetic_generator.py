@@ -210,6 +210,86 @@ def _generate_stress(hr,
     return np.clip(stress, 0.0, 100.0)
 
 
+def _generate_continuous_hrv(hr_minute,
+                             rng,
+                             resting_hr,
+                             base_rr_sd = 30.0,
+                             rr_sd_clip = (3.0, 150.0),
+                             rmssd_clip = (3.0, 200.0)):
+    """
+    Beat-by-beat RR simulation -> continuous (all-day) HRV.
+
+    A Garmin device measures inter-beat (RR) intervals continuously and recovers
+    instantaneous heart rate as 60000 / RR. From the RR series it derives HRV
+    (RMSSD = root mean square of successive RR differences). Unlike the
+    overnight-only HRV Status in `generate_HRV`, this is an ALL-DAY trace.
+
+    We treat the minute-level mean HR as the target rhythm: minute m emits about
+    `hr_minute[m]` beats whose mean RR is 60000 / hr_minute[m]. Beat-to-beat RR
+    jitter (the source of HRV) shrinks as HR climbs above rest -- parasympathetic
+    withdrawal during exertion -- so its per-minute SD is scaled by
+    resting_hr / hr_minute. RMSSD is then summarised per minute.
+
+    Args:
+        hr_minute   : 1D minute-level mean heart rate (bpm) -- the target rhythm.
+        rng         : np.random.Generator.
+        resting_hr  : per-user baseline bpm; the high-HRV (rest) anchor.
+        base_rr_sd  : beat-to-beat RR SD (ms) at resting HR. Single tuning knob;
+                      RMSSD at rest is ~sqrt(2) * base_rr_sd.
+        rr_sd_clip  : physiological clip on the per-minute RR SD (ms).
+        rmssd_clip  : physiological clip on the per-minute RMSSD (ms).
+
+    Returns:
+        (rmssd_ms, hr_from_rr): two length-len(hr_minute) float arrays --
+        continuous RMSSD per minute, and BPM recovered from RR per minute (a
+        60000 / RR sanity trace that should track `hr_minute` closely).
+    """
+    hr_minute = np.asarray(hr_minute, dtype=float)
+    n_min = hr_minute.shape[0]
+
+    # ~hr beats land in a one-minute window; always at least one.
+    counts = np.clip(np.rint(hr_minute).astype(np.intp), 1, None)
+
+    mean_rr_min = 60000.0 / hr_minute                       # ms, per minute
+    rr_sd_min = np.clip(base_rr_sd * (resting_hr / hr_minute),
+                        rr_sd_clip[0], rr_sd_clip[1])        # HRV shrinks w/ HR
+
+    # expand minute-level quantities to one entry per beat
+    mean_rr_beat = np.repeat(mean_rr_min, counts)
+    rr_sd_beat   = np.repeat(rr_sd_min, counts)
+    minute_id    = np.repeat(np.arange(n_min), counts)
+
+    rr = mean_rr_beat + rng.normal(0.0, 1.0, mean_rr_beat.shape[0]) * rr_sd_beat
+    rr = np.clip(rr, 300.0, 2000.0)                          # 30-200 bpm guard
+
+    bpm_beat = 60000.0 / rr                                  # recover BPM from RR
+
+    # per-minute segment starts in the beat array (counts >= 1 -> all non-empty)
+    starts = np.zeros(n_min, dtype=np.intp)
+    np.cumsum(counts[:-1], out=starts[1:])
+
+    # recovered HR per minute = mean instantaneous BPM
+    hr_from_rr = np.add.reduceat(bpm_beat, starts) / counts
+
+    # squared successive RR differences, with cross-minute boundaries zeroed so
+    # RMSSD is computed strictly within each minute. Pad to beat length so the
+    # final segment start is always valid for reduceat.
+    d2 = np.zeros(rr.shape[0])
+    diff_rr = np.diff(rr)
+    same_min = minute_id[1:] == minute_id[:-1]
+    d2[:-1] = np.where(same_min, diff_rr * diff_rr, 0.0)
+
+    sum_d2 = np.add.reduceat(d2, starts)
+    pair_counts = counts - 1                                 # within-minute pairs
+    with np.errstate(invalid="ignore", divide="ignore"):
+        msd = np.where(pair_counts > 0, sum_d2 / pair_counts, np.nan)
+    rmssd_ms = np.sqrt(msd)
+    # single-beat minutes have no successive pair -> floor for a continuous trace
+    rmssd_ms = np.clip(np.nan_to_num(rmssd_ms, nan=rmssd_clip[0]), *rmssd_clip)
+
+    return rmssd_ms, hr_from_rr
+
+
 ### HRV STATUS (overnight)
 HRV_STATUS_NO_DATA = "No Status"
 
@@ -282,12 +362,17 @@ def _generate_heart_rate(user_id,
       Minute-level synthetic heart rate for one user over `days` days.
 
       Args:
-        resting_hr : per-user baseline (drawn if None, so users differ)
+        resting_hr : per-user baseline (drawn if None, so users differ). Also
+                     anchors the continuous HRV amplitude (high HRV at rest).
         circadian  : daily rhythm, lowest ~4am, highest ~4pm
         noise      : minute-to-minute white noise (see note on AR(1) below)
         bouts      : random activity spikes (count/time/length/size all vary)
 
-      Returns long-format DataFrame: user_id, minute, day, hr.
+      Returns long-format DataFrame: user_id, timestamp, minute, day, hr,
+      stress, rmssd_ms, hr_from_rr, source. The minute-level `hr` is the target
+      rhythm; `rmssd_ms` is continuous (all-day) HRV and `hr_from_rr` is BPM
+      recovered from the simulated RR intervals (60000 / RR) -- see
+      `_generate_continuous_hrv`.
     """
 
     # Build time-series
@@ -319,15 +404,21 @@ def _generate_heart_rate(user_id,
     # (HRV Status is overnight-only and generated separately -- see generate_HRV.)
     stress = _generate_stress(hr, rng)
 
+    # Continuous all-day HRV from beat-by-beat RR intervals; also recovers BPM
+    # via 60000 / RR as a sanity trace (hr_from_rr ~ hr).
+    rmssd_ms, hr_from_rr = _generate_continuous_hrv(hr, rng, resting_hr)
+
     timestamps = pd.date_range(start="2026-06-01", periods=n, freq="min")
     return pd.DataFrame({
-            "user_id":   user_id,
-            "timestamp": timestamps,
-            "minute":    t,
-            "day":       t // min_per_day,
-            "hr":        hr,
-            "stress":    stress,
-            "source":    source,
+            "user_id":    user_id,
+            "timestamp":  timestamps,
+            "minute":     t,
+            "day":        t // min_per_day,
+            "hr":         hr,
+            "stress":     stress,
+            "rmssd_ms":   rmssd_ms,
+            "hr_from_rr": hr_from_rr,
+            "source":     source,
         })
 
 def generate_HR(users = 100,
