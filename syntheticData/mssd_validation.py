@@ -101,7 +101,9 @@ def recover_ar1_params(series):
 
 
 def _label_for(sigma, rho):
-    """Coarse Stable/Volatile tag for the strip comparison."""
+    """Coarse Stable/Volatile tag for the strip comparison.
+        Thresholds subject to change/
+    """
     expected = 2.0 * sigma ** 2 * (1 - rho)
 
     if expected <= 0.4:
@@ -263,6 +265,18 @@ def main():
     data_generation_config.to_csv(config_path, index=False)
     plot_config_recovery(data_generation_config)  # true vs. recovered scatter
 
+    # Same comparison, one row per user (true + recovered side by side). Rename
+    # the recovered columns to match the per-cell table; leave `df` untouched so
+    # the plotting/aggregation above still references sigma_hat / rho_hat.
+    per_user_cols = ["user_id", "group", "n_answered",
+                     "true_sigma", "recovered_sigma", "true_rho", "recovered_rho",
+                     "true_expected_mssd", "empirical_mssd"]
+    per_user = (df.rename(columns={"sigma_hat": "recovered_sigma",
+                                   "rho_hat": "recovered_rho"})[per_user_cols]
+                  .round(3))
+    per_user_path = os.path.join(FIGURE_DIR, "param_recovery_per_user.csv")
+    per_user.to_csv(per_user_path, index=False)
+
     print("data_generation_config  : true vs. recovered AR(1) params per cell")
     print(data_generation_config.to_string(index=False))
     print()
@@ -271,6 +285,7 @@ def main():
     print(f"Pearson r               : {r:.3f}")
     print(f"Spearman rho            : {spearman:.3f}")
     print(f"config table written to : {config_path}")
+    print(f"per-user table written  : {per_user_path}")
     print(f"figures written to      : {FIGURE_DIR}")
 
     if r >= 0.7:
