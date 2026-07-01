@@ -6,8 +6,7 @@ point, `db_seed.py` pushes the data into the Django DB, and `mssd_validation.py`
 is the MSSD construct-validity harness.
 
 All series start at **2026-06-01 00:00**. EMA and HR rows are at **1-minute**
-frequency; HRV is **one row per night**. Pass a shared `user_ids` list and a
-fixed `seed` to make EMA / HR / HRV joinable and reproducible.
+frequency; HRV is **one row per night**. 
 
 ---
 

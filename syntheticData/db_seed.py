@@ -53,16 +53,6 @@ def _chunked(rows, size = 5000):
         yield rows[i:i + size]
 
 
-def _hr_zone(bpm, max_hr=195):
-    """Map a bpm to a HeartRateSample.ZONE_CHOICES bucket (% of max HR)."""
-    frac = bpm / max_hr
-    if frac < 0.50:
-        return "out_of_range"
-    if frac < 0.70:
-        return "fat_burn"
-    if frac < 0.85:
-        return "cardio"
-    return "peak"
 
 
 def _write_csvs(csv_dir, table_rows):
@@ -79,12 +69,12 @@ def _write_csvs(csv_dir, table_rows):
 
 def _reflect(engine):
     """
-    Checking model/table exists 
+    Checking model/table exists
     """
 
     md = sa.MetaData()
     names = ["app_user", "app_wearabledevice",
-             "app_heartratesample", "app_ema"]
+             "app_heartratesample", "app_stresssample", "app_ema"]
     md.reflect(bind=engine, only=names)
     missing = [n for n in names if n not in md.tables]
     if missing:
@@ -98,18 +88,16 @@ def reset_synthetic(conn, t):
     """Delete a previous synthetic seed (children first, then parents)."""
 
     users       = t["app_user"]
-    devices     = t["app_wearabledevice"]
     syn_users   = sa.select(users.c.user_id).where(
         users.c.email.like(f"%@{SYNTHETIC_DOMAIN}"))
-    syn_devices = sa.select(devices.c.device_id).where(
-        devices.c.user_id.in_(syn_users))
 
-    for tbl, col, subq in [
-        (t["app_heartratesample"], "device_id", syn_devices),
-        (t["app_ema"], "user_id", syn_users),
-        (t["app_wearabledevice"], "user_id", syn_users),
+    for tbl, col in [
+        (t["app_heartratesample"], "user_id"),
+        (t["app_stresssample"], "user_id"),
+        (t["app_ema"], "user_id"),
+        (t["app_wearabledevice"], "user_id"),
     ]:
-        conn.execute(sa.delete(tbl).where(tbl.c[col].in_(subq)))
+        conn.execute(sa.delete(tbl).where(tbl.c[col].in_(syn_users)))
     conn.execute(sa.delete(users).where(users.c.email.like(f"%@{SYNTHETIC_DOMAIN}")))
 
 
@@ -149,7 +137,7 @@ def seed(database_url, users, days, ema_per_day, resp_rate, hr_every, seed_val,
         if do_reset:
             reset_synthetic(conn, t)
 
-        # 1. app_user 
+        # 1. app_user
         today = datetime(2026, 6, 11)
         user_rows = []
         for uid in user_ids:
@@ -160,12 +148,9 @@ def seed(database_url, users, days, ema_per_day, resp_rate, hr_every, seed_val,
                 "last_name": LAST_NAMES[rng.integers(0, len(LAST_NAMES))],
                 "birthdate": (today - timedelta(days=age_days)).date(),
                 "gender": GENDERS[rng.integers(0, len(GENDERS))],
-                "height_feet": str(int(rng.integers(4, 7))),
-                "height_inches": str(int(rng.integers(0, 12))),
-                "goal_weight": round(float(rng.uniform(120, 200)), 1),
-                "goal_to_lose_weight": bool(rng.random() < 0.6),
-                "goal_to_feel_better": bool(rng.random() < 0.6),
                 "password": None,          # mock accounts: no usable password
+                "is_enrolled": True,
+                "enrolled_at": today,
             })
         conn.execute(sa.insert(t["app_user"]), user_rows)
 
@@ -178,48 +163,59 @@ def seed(database_url, users, days, ema_per_day, resp_rate, hr_every, seed_val,
             )
         }
 
-        # 2. app_wearabledevice (one Garmin per user) 
+        # 2. app_wearabledevice (one Garmin per user)
         # each user's device model = the source flag on their HR rows
         device_model = (hr_df.groupby("user_id")["source"].first().to_dict())
         device_rows = []
         for uid in user_ids:
             device_rows.append({
                 "user_id": uid_map[uid],
-                "fitbit_device_id": f"garmin-{uid[:8]}",
-                "device_type": "smartwatch",
+                "labfront_participant_id": f"labfront-{uid[:8]}",
                 "device_name": device_model.get(uid, "Garmin Venu 3"),
                 "last_synced_at": today,
                 "is_active": True,
-                "created_at": today,
             })
         conn.execute(sa.insert(t["app_wearabledevice"]), device_rows)
 
-        dev_map = {
-            uid: pk for pk, uid in conn.execute(
-                sa.select(t["app_wearabledevice"].c.device_id,
-                          t["app_wearabledevice"].c.user_id)
-                .where(t["app_wearabledevice"].c.user_id.in_(uid_map.values()))
-            )
-        }
-
-        # 3. app_heartratesample (bpm + HR zone only)
+        # 3. app_heartratesample (bpm at 15-sec resolution)
         hr_df = hr_df.copy()
-        hr_df["device_id"] = hr_df["user_id"].map(
-            lambda u: dev_map[uid_map[u]])
+        hr_df["db_user_id"] = hr_df["user_id"].map(lambda u: uid_map[u])
         ts = hr_df["timestamp"].dt.to_pydatetime()
 
         hr_rows = []
-        for i, (dev, bpm) in enumerate(zip(
-                hr_df["device_id"].to_numpy(), hr_df["hr"].to_numpy())):
+        for i, (uid, bpm) in enumerate(zip(
+                hr_df["db_user_id"].to_numpy(), hr_df["hr"].to_numpy())):
             bpm_i = int(round(bpm))
             hr_rows.append({
-                "device_id": int(dev), "timestamp": ts[i],
-                "bpm": bpm_i, "zone": _hr_zone(bpm_i),
+                "user_id": int(uid), "timestamp": ts[i],
+                "bpm": bpm_i, "source": "garmin_labfront",
             })
         for batch in _chunked(hr_rows):
             conn.execute(sa.insert(t["app_heartratesample"]), batch)
 
-        # 4. app_ema -- only answered prompts (no status column to flag misses)
+        # 4. app_stresssample (3-min epochs)
+        # Derive stress from HR percentiles within each user's data
+        stress_rows = []
+        for uid in user_ids:
+            user_hr = hr_df[hr_df["user_id"] == uid].copy()
+            if len(user_hr) == 0:
+                continue
+            # Sample every 3 minutes and map HR to stress score (0-100)
+            user_hr_sample = user_hr.iloc[::3].copy()
+            hr_min, hr_max = user_hr["hr"].min(), user_hr["hr"].max()
+            for _, row in user_hr_sample.iterrows():
+                # Map HR to stress 0-100: low HR -> low stress, high HR -> high stress
+                stress_score = int(max(0, min(100, 50 + (row["hr"] - 70) * 2)))
+                stress_rows.append({
+                    "user_id": uid_map[uid],
+                    "timestamp": row["timestamp"],
+                    "stress_score": stress_score,
+                    "source": "garmin_labfront",
+                })
+        for batch in _chunked(stress_rows):
+            conn.execute(sa.insert(t["app_stresssample"]), batch)
+
+        # 5. app_ema -- only answered prompts
         ema_rows = []
         e_ts = ema_df["timestamp"].dt.to_pydatetime()
         ema_vals = ema_df["ema"].to_numpy()
@@ -229,10 +225,13 @@ def seed(database_url, users, days, ema_per_day, resp_rate, hr_every, seed_val,
                 continue
             ema_rows.append({
                 "user_id": uid_map[ema_uids[i]],
-                "timestamp": e_ts[i],
+                "prompt_id": f"prompt-mood-{i % 5}",
+                "sent_at": e_ts[i],
+                "responded_at": e_ts[i],
+                "status": "completed",
                 "mood": int(ema_vals[i]),
-                "energy": None, "stress": None,
-                "physical_activity": None, "weight_lbs": None, "notes": None,
+                "stress": None,
+                "energy": None,
             })
         for batch in _chunked(ema_rows):
             conn.execute(sa.insert(t["app_ema"]), batch)
@@ -243,6 +242,7 @@ def seed(database_url, users, days, ema_per_day, resp_rate, hr_every, seed_val,
             "app_user": user_rows,
             "app_wearabledevice": device_rows,
             "app_heartratesample": hr_rows,
+            "app_stresssample": stress_rows,
             "app_ema": ema_rows,
         })
         print(f"csv dump  : {csv_dir}")
@@ -253,6 +253,7 @@ def seed(database_url, users, days, ema_per_day, resp_rate, hr_every, seed_val,
         "users": len(user_rows),
         "devices": len(device_rows),
         "heart_rate_samples": len(hr_rows),
+        "stress_samples": len(stress_rows),
         "ema_answered": len(ema_rows),
         "ema_missed_omitted": int(np.isnan(ema_vals).sum()),
     }
