@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import sqlalchemy as sa
 
-from synthetic_generator import generate_user_ids, generate_cohort, generate_HR
+from syntheticData.decision.synthetic_generator import generate_user_ids, generate_cohort, generate_HR
 
 SYNTHETIC_DOMAIN = "synthetic.gatorfan"
 

@@ -20,9 +20,9 @@ if __name__ == "__main__":
 
     # TWEAK PARAMETERS HERE
     USERS = 100
-    DAYS = 21
+    DAYS = 164
     EMA_PER_DAY = 5
-    RESP_RATE = 0.80
+    RESP_RATE = 0.90
     SEED = 42
 
     # Shared UUIDs so EMA and HR data can be joined

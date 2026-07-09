@@ -170,15 +170,14 @@ def generate_cohort(users = 100,
     return pd.concat(all_data)
 
 ### WEARABLE PROFILE
-# We simulate the Garmin hardware line (Venu 3 / Vivoactive 5/6) rather than
-# Fitbit. Garmin reports two distinct HRV-based products:
+# We simulate the Garmin hardware line (Venu 3) 
 #   - all-day STRESS (0-100): continuous, reported minute-by-minute. Modelled
 #     here directly from heart rate (see `_generate_stress`).
 #   - HRV STATUS: OVERNIGHT only -- RMSSD is measured during sleep, one value
 #     per night, compared against a rolling 7-day baseline to label a status
 #     (Balanced / Unbalanced / Low). Modelled nightly (see `generate_HRV`),
 #     NOT continuously coupled to heart rate.
-GARMIN_DEVICES = ("Garmin Venu 3", "Garmin Vivoactive 5", "Garmin Vivoactive 6")
+GARMIN_DEVICES = ("Garmin Venu 3")
 
 
 def _generate_stress(hr,

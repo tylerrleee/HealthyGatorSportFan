@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 
 import numpy as np
 
-from synthetic_generator import generate_HR, generate_cohort, generate_user_ids
+from syntheticData.decision.synthetic_generator import generate_HR, generate_cohort, generate_user_ids
 
 
 def post_json(url, payload):
