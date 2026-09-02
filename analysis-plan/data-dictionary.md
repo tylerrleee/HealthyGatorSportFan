@@ -1,19 +1,29 @@
 # Data Dictionary | HealthyGatorSportsFan JITAI Study
 
+Author: Tien Tyler Le
+
+Date: 08/07/2026
+
+[Github](https://github.com/Geaboi/HealthyGatorSportFan/tree/data-dictionary/analysis-plan)
+
 This document defines every table and column used in the REACT / JITAI feasibility
 analysis so that **anyone** can understand
 what each field is, where it comes from, and how it is computed.
 
-For every column we record four things:
+For every column we record:
 
 | Field | Meaning |
 |-------|---------|
-| **Name** | Column name as it appears in the database / dataset |
-| **Type** | Storage type (`INT`, `VARCHAR(n)`, `DATETIME`, `SMALLINT`, `FLOAT`, `BOOLEAN`, `JSONB`, `TEXT`, `DATE`) |
+| **Name** | Column name as it appears in the database / synthetic data |
+| **Type** | Data type (`INT`, `VARCHAR(n)`, `DATETIME`, `SMALLINT`, `FLOAT`, `BOOLEAN`, `JSONB`, `TEXT`, `DATE`) |
 | **Source stream** | Where the value originates (see the controlled vocabulary below) |
 | **Meaning** | What the value represents, including units, ranges, and encodings |
 
 ## Source-stream vocabulary
+
+Aligning with Celia's physiological data limitation, Labfront limitation, Eliana's prompt analysis plan, and Abigail's feasbility definitions. 
+
+Database and modeling is based on Dustin's [Django model.](https://www.dropbox.com/work/REACT/Engineering/Dustin/Archive?di=left_nav_browse)
 
 | Tag | Definition |
 |-----|------------|
@@ -27,8 +37,8 @@ For every column we record four things:
 ## Conventions
 
 - **Study window:** 14-day protocol, **5 EMA prompts per participant per day** (expected N ≈ 70 prompts/participant). Feasibility thresholds are calibrated from the synthetic sensitivity analysis. (`JITAI-analysis-plan.md`)
-- **Synthetic epoch:** synthetic cohorts start at **2026-06-01 00:00**; EMA and HR rows are at 1-minute frequency, HRV is one row per night. (`syntheticData/SCHEMA.md`)
-- **Authoritative schema:** this dictionary documents the **REACT analysis schema** (`analysis-plan/schema.md` + the current `syntheticData/db_seed.py`) — the tables actually analyzed per `JITAI-analysis-plan.md`. The production Django backend (`HealthyGatorSportsFanDjango/app/models.py`) currently differs; those differences are catalogued in the [Schema reconciliation appendix](#appendix--schema-reconciliation--known-gaps). **No Django migrations exist yet for this schema** — see the appendix.
+- **Synthetic epoch:** synthetic cohorts start at **YYYY-MM-DD 00:00**; EMA and HR rows are at 1-minute frequency, HRV is one row per night. (`syntheticData/SCHEMA.md`)
+- **Authoritative schema:** this dictionary documents the **REACT analysis schema** (`analysis-plan/schema.md` + the current `syntheticData/db_seed.py`) ; the tables actually analyzed per `JITAI-analysis-plan.md`. The production Django backend (`HealthyGatorSportsFanDjango/app/models.py`) currently differs; those differences are catalogued in the [Schema reconciliation appendix](#appendix--schema-reconciliation--known-gaps). **No Django migrations exist yet for this schema** -- see the appendix.
 - **Canonical prose definitions** live in `analysis-plan/Feasibility Definitions (2).docx` (binary; not reproduced here). This dictionary is intended to stay consistent with it.
 
 ---
@@ -39,39 +49,38 @@ Three data streams are collected during the study period:
 
 | Stream | Delivery mechanism | Tables |
 |--------|--------------------|--------|
-| **EMA survey responses** | Push notification → in-app survey | [`ema`](#22-ema), [`user`](#21-user) |
+| **EMA survey responses** | Push notification to in-app survey | [`ema`](#22-ema), [`user`](#21-user) |
 | **JITAI interventions & engagement** | Decision engine + phone app | [`jitai_log`](#26-jitai_log), [`engagement_log`](#27-engagement_log), [`phone_telemetry`](#28-phone_telemetry) |
 | **Garmin wearable telemetry** | Labfront import | [`heart_rate_sample`](#23-heart_rate_sample), [`stress_sample`](#24-stress_sample), [`wearable_device`](#25-wearable_device) |
 
 ---
 
-## How Labfront/Garmin data is actually produced (collection mechanics & caveats)
+## How Labfront/Garmin data is produced (collection mechanics & caveats)
 
 Labfront is a third-party research wrapper over Garmin's API/SDK. It simplifies
-study management but shapes — and constrains — the meaning of every
-`Labfront/Garmin` column below. (Source: `analysis-plan/labfront.md`.)
+study management but shapes the meaning of every
+`Labfront/Garmin` column below. (Source: `analysis-plan/labfront.md` or [Celia's LabFront Documentation](https://www.dropbox.com/work/REACT/Engineering/Celia_Mercier/Labfront%20Documentation?di=left_nav_browse&_p_luid=1ccede4f))
 
 - **Black-box derived metrics.** Garmin **Stress Score** (0–100) and **HRV** are
-  proprietary, pre-computed algorithms derived from HRV/PPG. They are **not raw**
-  and **cannot be audited or recomputed**. In particular, `stress_sample.stress_score`
-  is a Garmin score — **not** a function of heart rate. (The synthetic seeder
-  fakes stress as `50 + (hr − 70) × 2`, `db_seed.py:208`; this is a stand-in only
-  and does **not** reflect how real stress is produced.)
+  proprietary, pre-computed algorithms derived from HRV/PPG.
+    - `stress_sample.stress_score` is a Garmin score -- **not** a function of heart rate. (The synthetic seeder fakes stress as `50 + (hr − 70) × 2`, `db_seed.py:208`; this is a stand-in only and does **not** reflect how real stress is produced.)
 - **No wear-status field.** Exports contain **no** `is_worn` flag. **Non-wear must
   be inferred** from missing timestamps, low confidence scores, or sync status.
-  Consequently `bpm = 0`/NULL is treated as inferred non-wear, and wear-time uses
-  the ">2-hour gap" proxy (see [§3 Wear time](#3-derived--analysis-metrics)).
+    - Consequently `bpm = 0`/NULL is treated as inferred non-wear, and wear-time uses
+  the ">2-hour gap" proxy (see [3. Wear time](#3-derived--analysis-metrics)).
   Note BBI streams keep recording even when signal confidence drops to `0`.
 - **Coarse HRV granularity.** HR is available at ~1-second/epoch resolution, but
   **HRV is delivered as 5-minute averages or single nightly summaries**
-  (`garmin-connect-hrv-values`) — too coarse for instantaneous JITAI triggers.
-- **Sync latency.** Watch → Labfront processing adds **2–5 minutes** (longer for
-  high-volume BBI streams). This affects `wearable_device.last_synced_at`
+  (`garmin-connect-hrv-values`) 
+    - too coarse for instantaneous JITAI triggers.
+- **Sync latency.** Watch to Labfront processing adds **2–5 minutes** (longer for
+  high-volume BBI streams). 
+    - This affects `wearable_device.last_synced_at`
   freshness, the staleness of `jitai_log.hr_at_trigger` / `stress_at_trigger`, and
   every delivery-funnel timestamp. Real-time triggering is therefore constrained.
 - **Batch delivery.** Data arrives as batch `.zip` files of fragmented,
-  time-bucketed CSVs across per-measurement directories (not streaming). The
-  Labfront dashboard groups loss into broad buckets ("No HR Data",
+  time-bucketed CSVs across per-measurement directories (not streaming). 
+    - The Labfront dashboard groups loss into broad buckets ("No HR Data",
   "Haven't Synced"), obscuring non-compliance vs. hardware/sync failure.
 
 ---
@@ -131,7 +140,7 @@ Heart-rate samples imported from Garmin via Labfront.
 | `id` | INT (PK) | Labfront/Garmin | Primary key. |
 | `user_id` | INT (FK → `user.user_id`) | Labfront/Garmin | Participant. |
 | `timestamp` | DATETIME | Labfront/Garmin | Sample time. Real cadence ~1-sec/epoch; subject to 2–5 min sync latency. Synthetic data is minute-level, optionally thinned via `--hr-every` (`db_seed.py:133`). |
-| `bpm` | SMALLINT | Labfront/Garmin | Heart rate in beats per minute. `0`/NULL ≈ **inferred non-wear** (no explicit wear flag — see [collection caveats](#how-labfrontgarmin-data-is-actually-produced-collection-mechanics--caveats)). |
+| `bpm` | SMALLINT | Labfront/Garmin | Heart rate in beats per minute. `0`/NULL ≈ **inferred non-wear** (no explicit wear flag -- see [collection caveats](#how-labfrontgarmin-data-is-actually-produced-collection-mechanics--caveats)). |
 | `source` | VARCHAR(32) | Labfront/Garmin | Import/provenance tag; seeder writes `garmin_labfront` (`db_seed.py:191`). |
 
 ### 2.4 `stress_sample`
@@ -143,7 +152,7 @@ Garmin Stress Score time series imported from Labfront.
 | `id` | INT (PK) | Labfront/Garmin | Primary key. |
 | `user_id` | INT (FK → `user.user_id`) | Labfront/Garmin | Participant. |
 | `timestamp` | DATETIME | Labfront/Garmin | Sample time. Synthetic data is sampled every 3 minutes (`db_seed.py:204`). |
-| `stress_score` | SMALLINT | Labfront/Garmin | **Garmin proprietary stress score, 0–100**, derived from HRV by a black-box algorithm — **not** raw and **not** a function of HR. Synthetic proxy only: `50 + (hr − 70) × 2` (`db_seed.py:208`). |
+| `stress_score` | SMALLINT | Labfront/Garmin | **Garmin proprietary stress score, 0–100**, derived from HRV by a black-box algorithm -- **not** raw and **not** a function of HR. Synthetic proxy only: `50 + (hr − 70) × 2` (`db_seed.py:208`). |
 | `source` | VARCHAR(32) | Labfront/Garmin | Import/provenance tag; seeder writes `garmin_labfront` (`db_seed.py:213`). |
 
 ### 2.5 `wearable_device`
@@ -260,12 +269,12 @@ follow `JITAI-analysis-plan.md` and `syntheticData/decision/`.
 |--------|------|----------------------|--------------------|
 | **Within-person MSSD** (`observed_mssd`) | FLOAT | Mean of squared successive differences: `mean((x_t − x_{t-1})²)` over **consecutive answered** EMA items. | The core JITAI trigger signal. Missing EMAs suppress the difference for both the missing observation and the immediately following prompt (`JITAI-analysis-plan.md:83`). |
 | **Expected MSSD** | FLOAT | `2·σ²·(1−ρ)` from latent AR(1) parameters. | Ground-truth benchmark used to validate recovery (`syntheticData/SCHEMA.md`). |
-| **AR(1) ρ̂** (autocorrelation) | FLOAT | Lag-1 autocorrelation over consecutive answered EMA pairs. | Recovery **degrades below ~80%** response rate — an analytic requirement, distinct from the 75% feasibility benchmark. |
+| **AR(1) ρ̂** (autocorrelation) | FLOAT | Lag-1 autocorrelation over consecutive answered EMA pairs. | Recovery **degrades below ~80%** response rate -- an analytic requirement, distinct from the 75% feasibility benchmark. |
 | **AR(1) σ̂** (residual SD) | FLOAT | Sample SD of demeaned answered EMA. | More robust than ρ̂ across response rates. |
 | **Response latency** | INT (min) | `responded_at − sent_at`. | Must be ≤ 60 min to count in-window. |
 | **Wear time** | FLOAT (%) | Coverage over standardized waking hours **8:00 AM–10:00 PM** (14 h/day): numerator = 14 h − gaps > **2 consecutive hours**; denominator = 14 h. | Benchmark ≥ 8 h/day, ≥ 5 days/week. Non-wear inferred (no wear flag); BBI/EMA used as supporting evidence (`JITAI-analysis-plan.md:31-36`). |
 | **Intervention dosage** | INT / week | `COUNT(send_prompt = TRUE)` per participant per week. | Target **3–7 prompts/week** (projected ≈ 4.85 at 80th-pct threshold + 80% response). Flag deviations > ±1.5. |
-| **Cooldown compliance** | — | Minimum gap between consecutive triggers per participant. | Flag if < **60 minutes**. |
+| **Cooldown compliance** | -- | Minimum gap between consecutive triggers per participant. | Flag if < **60 minutes**. |
 | **Delivery-funnel conversion** | FLOAT (%) | Conversion across `push_sent_at → device_received_at → receipt_reported_at → engagement`. | Diagnoses loss at each stage. |
 | **HR-MSSD vs EMA-MSSD** | FLOAT | Rolling MSSD on minute-level HR vs EMA-based MSSD. | Concordance between physiological and self-report volatility. |
 | **Completed check-in rate** | FLOAT (%) | Completed EMAs / delivered EMAs (delivery failures excluded from denominator). | Preregistered benchmark **75%**. |
@@ -281,13 +290,13 @@ the database and drive validation. Full generator I/O is documented in
 analyst will actually encounter in CSV exports and validation outputs are
 summarized here.
 
-> `syntheticData/SCHEMA.md` **§4 (Database seed outputs) is stale** — it
+> `syntheticData/SCHEMA.md` **§4 (Database seed outputs) is stale** -- it
 > describes an older `db_seed.py` that targeted the production `models.py` schema
 > (device-FK `heart_rate_sample` with `zone`, EMA with only `mood`). The current
 > `db_seed.py` targets the REACT schema documented above. Trust §1–3 for generator
 > internals; trust **this file** for what gets persisted.
 
-**EMA frame** (`generate_cohort`) — one row per prompt per user
+**EMA frame** (`generate_cohort`) : one row per prompt per user
 
 | Name | Type | Source stream | Meaning |
 |------|------|---------------|---------|
@@ -298,7 +307,7 @@ summarized here.
 | `true_rho` | float | Derived | Ground-truth latent AR(1) autocorrelation ρ. |
 | `true_expected_mssd` | float | Derived | `2·σ²·(1−ρ)`. |
 
-**HR frame** (`generate_HR`) — one row per minute per user
+**HR frame** (`generate_HR`) : one row per minute per user
 
 | Name | Type | Source stream | Meaning |
 |------|------|---------------|---------|
@@ -308,7 +317,7 @@ summarized here.
 | `hr_from_rr` | float | Derived | bpm recovered from simulated RR (`60000/RR`); sanity trace ≈ `hr`. |
 | `source` | str | Derived | Garmin device model (Venu 3 / Vivoactive 5 / Vivoactive 6). |
 
-**Overnight-HRV frame** (`generate_HRV`) — one row per night per user
+**Overnight-HRV frame** (`generate_HRV`) : one row per night per user
 
 | Name | Type | Source stream | Meaning |
 |------|------|---------------|---------|
@@ -330,7 +339,7 @@ summarized here.
 
 ---
 
-## Appendix — Schema reconciliation & known gaps
+## Appendix : Schema reconciliation & known gaps
 
 The production Django backend (`HealthyGatorSportsFanDjango/app/models.py`,
 migrations through `0024_jitailog`) does **not** match the REACT analysis schema
